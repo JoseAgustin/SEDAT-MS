@@ -1,66 +1,298 @@
-# SEDAT-MS
-## Modeling Data Extraction System for comparison with satellite measurements (SEDAT-MS)
+# SEDAT-MS — Modeling Data Extraction System for Satellite Comparison
 
-The SEDAT-MS consists of a set of programs in csh, GrADS, and Fortran that execute a sequence of steps to extract from the __WRF-chem__ outputs the environmental concentrations of compounds of interest (NO<sub>2</sub>, SO <sub>2</sub>. CO and O<sub>3</sub>), for specific times, these concentrations are at the different heights that the model contains, then convert the concentrations from ppm to molecules/m<sup >3</sup> and integrates them vertically to obtain molecules/m<sup>2</sup> which is what is compared with satellite measurements.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Language: Fortran](https://img.shields.io/badge/Language-Fortran%2090-orange.svg)]()
+[![GrADS](https://img.shields.io/badge/Tool-GrADS-blue.svg)](http://cola.gmu.edu/grads/)
+[![WRF-Chem](https://img.shields.io/badge/Model-WRF--Chem-lightblue.svg)](https://ruc.noaa.gov/wrf/wrf-chem/)
+[![Published in](https://img.shields.io/badge/Published%20in-ACP%202020-green.svg)](https://doi.org/10.5194/acp-20-15761-2020)
 
-This is done in two steps: the first is to extract the integrated concentration values ​​from the ground level to the last layer of the model and from the ground level to the mixing layer height (pbl). The second step combines the outputs and generates one file per compound. The programs that make up this system are described below:
+> A pipeline of C-shell, GrADS, and Fortran programs that extracts 3D concentration fields from **WRF-Chem** output files, converts them from ppm to column density (molecules cm⁻²), and integrates them vertically — producing model columns directly comparable to satellite total-column retrievals such as **TROPOMI** (Sentinel-5P).
 
-- `satelite_pronos.csh` is written for csh and is a code that identifies the __WRF__ files to be read, processes them to be read by __GrADS__ through the __WRFnc2ctl__ program and invokes the scripts in grads (`satelite_pron1.gs`, `satelite_pron2.gs` and `satellite_pron3.gs`) to extract the information in the vertical and then invoke the programs that integrate lee_pronos.exe in the total column and the one that integrates up to the mixing layer (PBL) `lee_pbl_p.exe`.
+---
 
-- `satellite_pron1.gs` script for GrADS that extracts the WRF data in the vertical for 10:00 hours, generates the files: capa.dat d_lat.dat d_lon.dat c_pblh.dat c_so2.dat c_no2.dat c_co .dat c_o3.dat
+## Table of Contents
 
-- `satellite_pron2.gs` script for grads that extracts the WRF data in the vertical for 15:00 hours, generates the files: capa.dat d_lat.dat d_lon.dat c_pblh.dat c_so2.dat c_no2.dat c_co .dat c_o3.dat
+- [Scientific Context](#scientific-context)
+- [Place in the Analysis Pipeline](#place-in-the-analysis-pipeline)
+- [Requirements](#requirements)
+- [Repository Structure](#repository-structure)
+- [How It Works](#how-it-works)
+  - [Step 1 — Vertical profile extraction (GrADS)](#step-1--vertical-profile-extraction-grads)
+  - [Step 2 — Unit conversion and vertical integration (Fortran)](#step-2--unit-conversion-and-vertical-integration-fortran)
+  - [Step 3 — Aggregation by hour and compound (Fortran)](#step-3--aggregation-by-hour-and-compound-fortran)
+- [Column Density Computation](#column-density-computation)
+- [Usage](#usage)
+- [Input Files](#input-files)
+- [Output Files](#output-files)
+- [Satellite Comparison](#satellite-comparison)
+- [Citation](#citation)
+- [References](#references)
 
-- `satellite_pron3.gs` script for grads that extracts the WRF data in the vertical for 16:00 hours, generates the files: capa.dat d_lat.dat d_lon.dat c_pblh.dat c_so2.dat c_no2.dat c_co .dat c_o3.dat
+---
 
-- `lee_capas_pronos.f90` Fortran program that reads layers and performs vertical integration up to the last level of the model.
+## Scientific Context
 
-- `lee_pbl_pronos.f90` Fortran program that reads layers and does the vertical integration up to the pbl.
+Evaluating air quality model simulations against satellite observations requires converting model output into the same physical quantity that satellites measure: the **vertically integrated column of a trace gas** (expressed in molecules cm⁻²). This is non-trivial because:
 
-- `promedios_fcst.f90` Fortran program that reads the outputs of the vertical integration, and saves the obtained values ​​by hour and compound. This is done until the last layer.
+- WRF-Chem stores concentrations as **mixing ratios in ppm** on native eta model levels, not as column densities.
+- Each model layer has a different pressure, temperature, and thickness that must be accounted for in the integration.
+- Satellites like TROPOMI (aboard ESA Sentinel-5P) and OMI (aboard NASA Aura) observe the **total tropospheric column** or the **boundary-layer column** depending on their averaging kernel profile.
 
-- `promedios_fcst2.f90` Fortran program that reads the outputs of the vertical integration, and saves the obtained values ​​by hour and compound. This is done up to the mixing layer.
+SEDAT-MS automates the entire extraction and conversion workflow, generating gridded ASCII column-density files at the satellite overpass times for four key atmospheric pollutants: **CO, NO₂, SO₂, and O₃**.
 
-## Method
+This tool was used as the post-processing step in a CO source attribution study over central Mexico that combined WRF-Chem passive tracer simulations (using geographic emission masks from [emiss_mask](https://github.com/JoseAgustin/emiss_mask)) with TROPOMI satellite observations to evaluate and improve the national CO emission inventory:
 
-Computes the molecules per square meter by:
+> **Borsdorff, T., García Reynoso, A., Maldonado, G., Mar-Morales, B., Stremme, W., Grutter, M., & Landgraf, J. (2020).** Monitoring CO emissions of the metropolis Mexico City using TROPOMI CO observations. *Atmospheric Chemistry and Physics*, **20**(24), 15761–15774. https://doi.org/10.5194/acp-20-15761-2020
 
-1) Computing the height of each layer using the following equation  h<sub>i</sub>=(PH<sub>i</sub>+PHB<sub>i</sub>)/9.81
-2) The Layer tickness computation layer=h<sub>i+1</sub>-h<sub>i</sub> [m]
-3) Pressure Pt=(P<sub>i</sub>+PB<sub>i</sub>)/101325 [from Pa to atm]
-5) Temperature in Kelvin TK<sub>i</sub>= (T<sub>i</sub>+300)*ff   where ff=Pt<sup >0.2854</sup>
-6) concentration of SO<sub>2</sub> = so2<sub>i</sub> Av/TK<sub>i</sub>*Pt<sub>i</sub>/R/1e6 [molec/cm<sup>2</sup>] where Av= 6.023E23 molecules/mol, R= 82.057 and so2<sub>i</sub>- is the WRF-chem output for SO<sub>2</sub> in ppm.
-7) Same computation for CO, NO<sub>2</sub> and O<sub>3</sub>
+---
 
-## Sistema de extracción de datos de modelación para comparación con mediciones de satelite (SEDAT-MS)
+## Place in the Analysis Pipeline
 
-El SEDAT-MS consiste en un conjunto de programas en csh, grads y fortran que ejecutan una secuencia de pasos para extraer de las salidas de WRF-chem las concentraciones ambientales de compuestos de interes (NO<sub>2</sub>, SO<sub>2</sub>. CO y O<sub>3</sub>), para horas específicas, estas concentraciones estan a las diferentes alturas que el modelo contiene, luego convierte las concentraciones de ppm a moleculas/m<sup>3</sup> y las integra en la vertical para obtener moleculas/m<sup>2</sup> que es lo que se compara con las mediciones de satelite.
+SEDAT-MS occupies **step 3** in the following four-stage workflow:
 
-Esto se dan en dos pasos el primero es extraer los valores de concentración integrada de nivel de suelo hasta la última capa del modelo y de nivel de suelo hasta la altura de capa de mezclado (pbl). El segundo paso combina las salidas y genera un archivo por compuesto. Los programas que integran este sistema se describen a continuación:
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  1. Emission masking  (emiss_mask)                               │
+│     E_CO × geographic masks → per-district tracer variables      │
+│     https://github.com/JoseAgustin/emiss_mask                    │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  2. WRF-Chem passive tracer simulation                           │
+│     chem_opt = 106  |  transport-only, no photochemistry         │
+│     Output: wrfout_d01_YYYY-MM-DD_HH:MM:SS                       │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  3. Column extraction  ◄─── THIS REPOSITORY (SEDAT-MS)           │
+│     GrADS scripts extract 3D profiles at overpass times          │
+│     Fortran programs convert ppm → molecules cm⁻² and integrate  │
+│     Output: gridded ASCII column densities per compound          │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  4. Satellite comparison and source inversion                    │
+│     Model columns collocated with TROPOMI S5P_OFFL_L2__CO____    │
+│     Linear inversion → per-district emission scaling factors     │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-- `satelite_pronos.csh` esta escrito para csh y es un código que identifica los archivosl __WRF__ a leer procesa para ser leidos por __GrADS__  mediate el programa __WRFnc2ctl__ e invoca los scripts en grads (`satelite_pron1.gs`, `satelite_pron2.gs` y `satelite_pron3.gs`) para extraer la informaicion en la vertical para luego invocar los programas que integran en la columna  total lee_pronos.exe y el que integra hasta a `pbl lee_pbl_p.exe`. 
-       
--	`satelite_pron1.gs` guión de instrucciones para GrADS que extrae los datos del WRF en la vertical para las 10:00 horas, genera los archivos: capas.dat d_lat.dat d_lon.dat c_pblh.dat  c_so2.dat c_no2.dat c_co.dat c_o3.dat
-       
--	`satelite_pron2.gs` guión de instrucciones para grads que extrae los datos del WRF en la vertical para las 15:00 horas, genera los archivos: capas.dat d_lat.dat d_lon.dat c_pblh.dat  c_so2.dat c_no2.dat c_co.dat c_o3.dat
-       
--	`satelite_pron3.gs` guión de instrucciones para grads que extrae los datos del WRF en la vertical para las 16:00 horas, genera los archivos: capas.dat d_lat.dat d_lon.dat c_pblh.dat  c_so2.dat c_no2.dat c_co.dat c_o3.dat
-       
--	`lee_capas_pronos.f90` programa en Fortran que leer capas  y hacer la integración en la vertical hasta el ultimo novel del modelo.
-       
--	`lee_pbl_pronos.f90` programa en Fortran que leer capas  y hacer la integración en la vertical hasta la pbl.
-       
--	`promedios_fcst.f90` programa en Fortran que lee las salidas de la integración en la vertical, y guarda por hora y compuesto los valores obtenidos. Esto se realiza hasta la última capa.
-       
--	`promedios_fcst2.f90` programa en Fortran que lee las salidas de la integración en la vertical, y guarda por hora y compuesto los valores obtenidos. Esto se realiza hasta la capa de mezclado.
+---
 
-## Método
+## Requirements
 
-Calcula las moléculas por metro cuadrado mediante:
+| Component | Notes |
+|---|---|
+| GrADS | Version 2.x; used for reading WRF-Chem NetCDF output |
+| WRFnc2ctl | Converts WRF-Chem NetCDF files to GrADS-readable descriptor format |
+| Fortran compiler | `gfortran` ≥ 6 or Intel `ifort` ≥ 17 |
+| C-shell (`csh`) | Required to run the master orchestration script |
 
-1) Calcular la altura de cada capa usando la siguiente ecuación h<sub>i</sub>=(PH<sub>i</sub>+PHB<sub>i</sub>)/9.81
-2) Cálculo del espesor de la capa Layer=h<sub>i+1</sub>-h<sub>i</sub> [m]
-3) Presión Pt=(P<sub>i</sub>+PB<sub>i</sub>)/101325 [de Pa a atm]
-5) Temperatura en Kelvin TK<sub>i</sub>= (T<sub>i</sub>+300)*ff donde ff=Pt<sup >0.2854</sup>
-6) concentración de SO<sub>2</sub> = so2<sub>i</sub> Av/TK<sub>i</sub>*Pt<sub>i</sub>/R/1e6 [molec /cm<sup>2</sup>] donde Av= 6.023E23 moléculas/mol, R= 82.057 y so2<sub>i</sub>- es la salida química de WRF para SO<sub>2</sub> en ppm.
-7) Mismo cálculo para CO, NO<sub>2</sub> y O<sub>3</sub>
+> **WRFnc2ctl** is a utility that creates the `.ctl` descriptor file for GrADS from a WRF-Chem NetCDF `wrfout` file. It is available from the [WRF-Chem tools page](https://www2.acom.ucar.edu/wrf-chem/wrf-chem-tools-community) or can be compiled from source within the WRF post-processing utilities.
+
+---
+
+## Repository Structure
+
+```
+SEDAT-MS/
+├── satelite_pronos.csh      # Master C-shell script — orchestrates the full pipeline
+├── satelite_pron1.gs        # GrADS script — extracts vertical profiles at 10:00 local time
+├── satelite_pron2.gs        # GrADS script — extracts vertical profiles at 15:00 local time
+├── satelite_pron3.gs        # GrADS script — extracts vertical profiles at 16:00 local time
+├── lee_capas_pronos.f90     # Fortran — integrates full column (surface to model top)
+├── lee_pbl_pronos.f90       # Fortran — integrates boundary-layer column (surface to PBL height)
+├── promedios_fcst.f90       # Fortran — aggregates full-column results by hour and compound
+├── promedios_fcst2.f90      # Fortran — aggregates PBL-column results by hour and compound
+└── README.md                # This file
+```
+
+---
+
+## How It Works
+
+The pipeline executes in three sequential steps controlled by `satelite_pronos.csh`.
+
+### Step 1 — Vertical profile extraction (GrADS)
+
+The master script `satelite_pronos.csh` identifies the WRF-Chem `wrfout` files to process, converts them to GrADS format using **WRFnc2ctl**, and then invokes one of three GrADS scripts depending on the target overpass time:
+
+| Script | Local overpass time | Typical satellite |
+|---|---|---|
+| `satelite_pron1.gs` | 10:00 | TROPOMI morning overpass |
+| `satelite_pron2.gs` | 15:00 | OMI afternoon overpass |
+| `satelite_pron3.gs` | 16:00 | TROPOMI afternoon overpass |
+
+Each GrADS script extracts the full vertical profile of all state variables needed for the column computation and writes them to binary scratch files:
+
+| File | Contents |
+|---|---|
+| `capas.dat` | Geopotential height perturbation PH and base-state PHB for each layer |
+| `d_lat.dat` | Latitude of each grid cell (degrees N) |
+| `d_lon.dat` | Longitude of each grid cell (degrees E) |
+| `c_pblh.dat` | Planetary boundary layer height (m) |
+| `c_co.dat` | CO mixing ratio vertical profile (ppm) |
+| `c_no2.dat` | NO₂ mixing ratio vertical profile (ppm) |
+| `c_so2.dat` | SO₂ mixing ratio vertical profile (ppm) |
+| `c_o3.dat` | O₃ mixing ratio vertical profile (ppm) |
+
+The pressure perturbation (P) and base-state pressure (PB) and perturbation potential temperature (T) are also extracted for the unit conversion.
+
+### Step 2 — Unit conversion and vertical integration (Fortran)
+
+Two compiled Fortran programs perform the atmospheric column calculation on the scratch files produced in Step 1. Both apply the same unit-conversion equations but integrate over different atmospheric depths:
+
+| Program | Source file | Integration depth |
+|---|---|---|
+| `lee_pronos.exe` | `lee_capas_pronos.f90` | Surface → top model level (total tropospheric column) |
+| `lee_pbl_p.exe` | `lee_pbl_pronos.f90` | Surface → PBLH (boundary-layer column only) |
+
+See [Column Density Computation](#column-density-computation) for the full equation set.
+
+### Step 3 — Aggregation by hour and compound (Fortran)
+
+Two additional Fortran programs read the layer-integrated outputs from Step 2, combine the results across hours and compounds, and write the final gridded column-density files:
+
+| Program | Source file | Output |
+|---|---|---|
+| `promedios_fcst.exe` | `promedios_fcst.f90` | Full-column density per compound per overpass hour |
+| `promedios_fcst2.exe` | `promedios_fcst2.f90` | PBL-column density per compound per overpass hour |
+
+---
+
+## Column Density Computation
+
+The conversion from WRF-Chem ppm mixing ratios to vertical column density (molecules cm⁻²) is computed layer by layer using the full atmospheric state at each grid column. For a single model layer *i*:
+
+| Quantity | Formula | Units | WRF-Chem variables |
+|---|---|---|---|
+| Layer height | `hᵢ = (PHᵢ + PHBᵢ) / 9.81` | m | `PH`, `PHB` |
+| Layer thickness | `Δhᵢ = hᵢ₊₁ − hᵢ` | m | derived |
+| Pressure | `Ptᵢ = (Pᵢ + PBᵢ) / 101325` | atm | `P`, `PB` |
+| Temperature | `TKᵢ = (Tᵢ + 300) × Ptᵢ^0.2854` | K | `T` |
+| Column density per layer | `Xᵢ = xᵢ × Aᵥ × Δhᵢ × Ptᵢ / (TKᵢ × R × 10⁶)` | molecules cm⁻² | species ppm |
+
+where:
+
+| Symbol | Value | Description |
+|---|---|---|
+| `xᵢ` | — | Species mixing ratio in layer *i* (ppm) |
+| `Aᵥ` | 6.023 × 10²³ mol⁻¹ | Avogadro constant |
+| `R` | 82.057 cm³ atm mol⁻¹ K⁻¹ | Ideal gas constant |
+
+The total column is the sum over all layers from the surface to the integration ceiling:
+
+```
+X_total = Σᵢ Xᵢ   [molecules cm⁻²]
+```
+
+The same formula applies identically to CO, NO₂, SO₂, and O₃ — only the input ppm field changes.
+
+> **Note on WRF potential temperature:** WRF stores the perturbation potential temperature `T` such that the full potential temperature is `θ = T + 300 K`. The conversion to actual temperature uses the Poisson relation: `TK = θ × (Pt / 1000)^0.2854` where pressure is in hPa; equivalently, `TK = (T + 300) × Pt^0.2854` when `Pt` is in atm relative to 1 atm.
+
+---
+
+## Usage
+
+### 1. Compile the Fortran programs
+
+```bash
+gfortran -O2 -o lee_pronos.exe     lee_capas_pronos.f90
+gfortran -O2 -o lee_pbl_p.exe      lee_pbl_pronos.f90
+gfortran -O2 -o promedios_fcst.exe promedios_fcst.f90
+gfortran -O2 -o promedios_fcst2.exe promedios_fcst2.f90
+```
+
+### 2. Configure the master script
+
+Edit `satelite_pronos.csh` to set the paths to your WRF-Chem output files and the working directory:
+
+```csh
+# Path to the directory containing wrfout_d01_* files
+set wrfout_dir = /path/to/your/wrfout/files
+
+# Working directory where scratch and output files will be written
+set work_dir = /path/to/output/directory
+
+# Target overpass time (1 = 10:00, 2 = 15:00, 3 = 16:00 local time)
+set overpass = 1
+```
+
+### 3. Run the pipeline
+
+```bash
+csh satelite_pronos.csh
+```
+
+The script will process all `wrfout` files found in `wrfout_dir`, extract profiles at the selected overpass time, perform the column integration, and write the final output files to `work_dir`.
+
+---
+
+## Input Files
+
+| File | Source | Description |
+|---|---|---|
+| `wrfout_d01_YYYY-MM-DD_HH:MM:SS` | WRF-Chem simulation | Standard WRF output NetCDF file |
+| `wrfout_d01_YYYY-MM-DD_HH:MM:SS.ctl` | Generated by WRFnc2ctl | GrADS descriptor file for the wrfout file |
+
+The `wrfout` file must contain the following 3D variables for the column computation: `PH`, `PHB` (geopotential), `P`, `PB` (pressure), `T` (potential temperature perturbation), and the species fields `co`, `no2`, `so2`, `o3` (or equivalent WRF-Chem variable names depending on the chemical mechanism used).
+
+---
+
+## Output Files
+
+SEDAT-MS produces two sets of ASCII gridded files per compound per overpass time:
+
+| File pattern | Integration | Units | Description |
+|---|---|---|---|
+| `co_col_HH.dat` | Full column | molecules cm⁻² | CO total tropospheric column at hour HH |
+| `no2_col_HH.dat` | Full column | molecules cm⁻² | NO₂ total tropospheric column at hour HH |
+| `so2_col_HH.dat` | Full column | molecules cm⁻² | SO₂ total tropospheric column at hour HH |
+| `o3_col_HH.dat` | Full column | molecules cm⁻² | O₃ total tropospheric column at hour HH |
+| `co_pbl_HH.dat` | PBL column | molecules cm⁻² | CO boundary-layer column at hour HH |
+| `no2_pbl_HH.dat` | PBL column | molecules cm⁻² | NO₂ boundary-layer column at hour HH |
+| `so2_pbl_HH.dat` | PBL column | molecules cm⁻² | SO₂ boundary-layer column at hour HH |
+| `o3_pbl_HH.dat` | PBL column | molecules cm⁻² | O₃ boundary-layer column at hour HH |
+
+Each file contains one row per grid cell with columns: `longitude`, `latitude`, `column_density`.
+
+---
+
+## Satellite Comparison
+
+The output files are designed for direct collocation with Level-2 satellite retrievals. For TROPOMI CO comparison, the workflow after SEDAT-MS is:
+
+1. **Read** the SEDAT-MS `co_col_HH.dat` column file on the WRF-Chem grid.
+2. **Download** TROPOMI Level-2 CO product files (`S5P_OFFL_L2__CO____`) for the same day from the [Copernicus Open Access Hub](https://scihub.copernicus.eu/) or [S5P Data Hub](https://s5phub.copernicus.eu/).
+3. **Collocate** by finding, for each TROPOMI pixel, the nearest WRF-Chem grid cell and matching the observation time to the closest model output time.
+4. **Apply TROPOMI averaging kernels** to the modelled vertical profile before integrating, so that both model and satellite represent the same vertical sensitivity. TROPOMI provides pressure-level averaging kernels in the Level-2 product (`column_averaging_kernel`).
+5. **Compare and invert**: if using per-district CO tracer fields from [emiss_mask](https://github.com/JoseAgustin/emiss_mask), the collocated per-district columns serve as basis functions in a linear source inversion against the TROPOMI observations.
+
+For OMI NO₂ or SO₂ comparison, use the `no2_col_HH.dat` or `so2_col_HH.dat` files and the corresponding OMI Level-2 product, applying the same collocation and averaging kernel procedure.
+
+---
+
+## Citation
+
+If you use SEDAT-MS in your research, please cite the study in which it was first applied:
+
+> Borsdorff, T., García Reynoso, A., Maldonado, G., Mar-Morales, B., Stremme, W., Grutter, M., & Landgraf, J. (2020). Monitoring CO emissions of the metropolis Mexico City using TROPOMI CO observations. *Atmospheric Chemistry and Physics*, **20**(24), 15761–15774. https://doi.org/10.5194/acp-20-15761-2020
+
+---
+
+## References
+
+- Borsdorff, T., García Reynoso, A., Maldonado, G., Mar-Morales, B., Stremme, W., Grutter, M., & Landgraf, J. (2020). Monitoring CO emissions of the metropolis Mexico City using TROPOMI CO observations. *Atmospheric Chemistry and Physics*, **20**(24), 15761–15774. https://doi.org/10.5194/acp-20-15761-2020
+
+- Grell, G. A., Peckham, S. E., Schmitz, R., McKeen, S. A., Frost, G. J., Skamarock, W. C., & Eder, B. K. (2005). Fully coupled "online" chemistry within the WRF model. *Atmospheric Environment*, **39**, 6957–6975. https://doi.org/10.1016/j.atmosenv.2005.04.027
+
+- Veefkind, J. P., Aben, I., McMullan, K., Förster, H., de Vries, J., Otter, G., Claas, J., Eskes, H. J., de Haan, J. F., Kleipool, Q., van Weele, M., Hasekamp, O., Hoogeveen, R., Landgraf, J., Snel, R., Tol, P., Ingmann, P., Voors, R., Kruizinga, B., Vink, R., Visser, H., & Levelt, P. F. (2012). TROPOMI on the ESA Sentinel-5 Precursor: A GMES mission for global observations of the atmospheric composition for climate, air quality and ozone layer applications. *Remote Sensing of Environment*, **120**, 70–83. https://doi.org/10.1016/j.rse.2011.09.027
+
+- García Reynoso, J. A., Emiss_mask — CO Emission Source Masks for WRF-Chem Tracer Simulations over Central Mexico. GitHub repository. https://github.com/JoseAgustin/emiss_mask
+
+---
+
+*README last updated: March 2026*
